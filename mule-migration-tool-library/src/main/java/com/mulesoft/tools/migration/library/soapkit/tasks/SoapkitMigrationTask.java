@@ -5,13 +5,8 @@
  */
 package com.mulesoft.tools.migration.library.soapkit.tasks;
 
+import com.mulesoft.tools.migration.library.soapkit.steps.*;
 import com.mulesoft.tools.migration.project.ProjectType;
-import com.mulesoft.tools.migration.library.soapkit.steps.SoapkitFault;
-import com.mulesoft.tools.migration.library.soapkit.steps.SoapkitHttpListenerMapping;
-import com.mulesoft.tools.migration.library.soapkit.steps.SoapkitMigrationTaskPomContribution;
-import com.mulesoft.tools.migration.library.soapkit.steps.SoapkitRouter;
-import com.mulesoft.tools.migration.library.soapkit.steps.SoapkitRouterConfig;
-import com.mulesoft.tools.migration.library.soapkit.steps.SoapkitWsdlLocation;
 import com.mulesoft.tools.migration.step.MigrationStep;
 import com.mulesoft.tools.migration.task.AbstractMigrationTask;
 
@@ -54,6 +49,7 @@ public class SoapkitMigrationTask extends AbstractMigrationTask {
     List<MigrationStep> steps = new ArrayList<>();
 
     steps.add(new SoapkitMigrationTaskPomContribution());
+    steps.add(new SoapkitNamespace());
     steps.add(new SoapkitRouterConfig());
     steps.add(new SoapkitRouter());
     steps.add(new SoapkitHttpListenerMapping());
