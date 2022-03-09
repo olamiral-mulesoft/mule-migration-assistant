@@ -117,7 +117,7 @@ public class MigrationJob implements Executable {
         }
       }
     } finally {
-      generateReport(report);
+      generateReport(report, applicationModel);
     }
   }
 
@@ -183,7 +183,7 @@ public class MigrationJob implements Executable {
     }
   }
 
-  private void generateReport(MigrationReport<ReportEntryModel> report) throws Exception {
+  private void generateReport(MigrationReport<ReportEntryModel> report, ApplicationModel applicationModel) throws Exception {
     List<ReportEntryModel> reportEntries = report.getReportEntries();
     for (ReportEntryModel entry : reportEntries) {
       try {
@@ -192,10 +192,11 @@ public class MigrationJob implements Executable {
         throw new MigrationJobException("Failed to generate report.", ex);
       }
     }
-    HTMLReport htmlReport = new HTMLReport(report.getReportEntries(), reportPath.toFile(), this.getRunnerVersion());
+    HTMLReport htmlReport = new HTMLReport(report, reportPath.toFile(), this.getRunnerVersion());
     htmlReport.printReport();
     if (jsonReportEnabled) {
-      JSONReport jsonReport = new JSONReport(report.getReportEntries(), reportPath.toFile(), outputProject);
+      applicationModel.getPomModel().ifPresent(p -> report.addConnectors(p));
+      JSONReport jsonReport = new JSONReport(report, reportPath.toFile(), outputProject);
       jsonReport.printReport();
     }
   }

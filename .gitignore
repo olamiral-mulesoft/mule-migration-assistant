@@ -14,6 +14,7 @@ target/
 *.ipr
 *.iws
 *.idea
+out/
 
 # Mac
 .DS_Store
@@ -27,3 +28,4 @@ testout.xml
 logs/
 servers/
 tmp/
+mule-migration-tool-e2e-tests/apps
