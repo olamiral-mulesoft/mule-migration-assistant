@@ -45,6 +45,7 @@ import java.util.Objects;
 public class ReportEntryModel {
 
   private final Level level;
+  private final String key;
   private final String elementContent;
   private transient Element element;
   private Integer lineNumber = 0;
@@ -54,8 +55,9 @@ public class ReportEntryModel {
   private final List<String> documentationLinks = new ArrayList<>();
 
 
-  public ReportEntryModel(Level level, Element element, String message, String... documentationLinks) {
+  public ReportEntryModel(String key, Level level, Element element, String message, String... documentationLinks) {
     this.level = level;
+    this.key = key;
     this.elementContent = element != null ? escapeXml11(domElementToString(element)) : "";
     this.element = element;
     this.message = message;
@@ -69,8 +71,17 @@ public class ReportEntryModel {
     this.documentationLinks.addAll(asList(documentationLinks));
   }
 
-  public ReportEntryModel(Level level, Element element, String message, Document document, String... documentationLinks) {
-    this(level, element, message, documentationLinks);
+  private ReportEntryModel(Level level, Element element, String message, String... documentationLinks) {
+    this(null, level, element, message, documentationLinks);
+  }
+
+  private ReportEntryModel(Level level, Element element, String message, Document document, String... documentationLinks) {
+    this(null, level, element, message, document, documentationLinks);
+  }
+
+  public ReportEntryModel(String key, Level level, Element element, String message, Document document,
+                          String... documentationLinks) {
+    this(key, level, element, message, documentationLinks);
     try {
       this.filePath = new File(new URI(document.getBaseURI())).getAbsolutePath();
     } catch (URISyntaxException e) {
@@ -94,32 +105,34 @@ public class ReportEntryModel {
   private void setElementLocation(Document document) {
     String xpathExpression = "";
     Element currentElement = element;
+    try {
+      // element may be null of a report entry is not generated for an XML element (such as a DW script in its own DWL file, the
+      // pom, etc.).
+      if (element == null || element.getDocument() == null) {
+        // This shouldn't happen, but we still have to validate in unit tests that the steps don't cause this.
+        this.lineNumber = -1;
+        this.columnNumber = -1;
+        return;
+      }
 
-    // element may be null of a report entry is not generated for an XML element (such as a DW script in its own DWL file, the
-    // pom, etc.).
-    if (element == null || element.getDocument() == null) {
-      // This shouldn't happen, but we still have to validate in unit tests that the steps don't cause this.
-      this.lineNumber = -1;
-      this.columnNumber = -1;
-      return;
-    }
+      while (currentElement != element.getDocument().getRootElement()) {
+        xpathExpression =
+            "/*[" + (1 + currentElement.getParentElement().getChildren().indexOf(currentElement)) + "]" + xpathExpression;
+        currentElement = currentElement.getParentElement();
+      }
 
-    while (currentElement != element.getDocument().getRootElement()) {
-      xpathExpression =
-          "/*[" + (1 + currentElement.getParentElement().getChildren().indexOf(currentElement)) + "]" + xpathExpression;
-      currentElement = currentElement.getParentElement();
-    }
+      xpathExpression = "/*" + xpathExpression;
 
-    xpathExpression = "/*" + xpathExpression;
-
-    List<Element> elements =
-        XPathFactory.instance()
-            .compile(xpathExpression, Filters.element(), null,
-                     document.getRootElement().getAdditionalNamespaces())
-            .evaluate(document);
-    if (elements.size() > 0) {
-      this.lineNumber = ((LocatedElement) elements.get(0)).getLine();
-      this.columnNumber = ((LocatedElement) elements.get(0)).getColumn();
+      List<Element> elements =
+          XPathFactory.instance()
+              .compile(xpathExpression, Filters.element()).evaluate(document);
+      if (elements.size() > 0) {
+        this.lineNumber = ((LocatedElement) elements.get(0)).getLine();
+        this.columnNumber = ((LocatedElement) elements.get(0)).getColumn();
+      }
+    } catch (Exception e) {
+      throw new RuntimeException("Report Generation Error - Fail to set element location. Element name: " + element.getName()
+          + ", xpath expression:" + xpathExpression, e);
     }
   }
 
@@ -160,6 +173,10 @@ public class ReportEntryModel {
       // do nothing with printing Namespaces....
     }
   };
+
+  public String getKey() {
+    return key;
+  }
 
   public Level getLevel() {
     return level;

@@ -2,23 +2,28 @@ package com.mulesoft.tools
 
 import java.util
 import java.util.Date
-
 import com.mulesoft.tools.ast._
 import com.mulesoft.tools.{ast => mel}
+import org.mule.weave.v1.parser.Parser
+import org.mule.weave.v2.{V1OperatorManager, V2LangMigrant}
 import org.mule.weave.v2.grammar._
 import org.mule.weave.v2.parser.ast.logical.{AndNode, OrNode}
 import org.mule.weave.v2.parser.annotation.{EnclosedMarkAnnotation, InfixNotationFunctionCallAnnotation, QuotedStringAnnotation}
 import org.mule.weave.v2.parser.ast.functions.FunctionCallParametersNode
 import org.mule.weave.v2.parser.ast.header.HeaderNode
+import org.mule.weave.v2.parser.ast.header.directives.{VersionDirective, VersionMajor, VersionMinor}
 import org.mule.weave.v2.parser.ast.structure.schema.{SchemaNode, SchemaPropertyNode}
 import org.mule.weave.v2.parser.ast.types.TypeReferenceNode
 import org.mule.weave.v2.parser.ast.variables.{NameIdentifier, VariableReferenceNode}
+import org.mule.weave.v2.parser.location.UnknownLocation
 import org.mule.weave.v2.parser.{ast => dw}
+import org.mule.weave.v2.parser.ast.{AstNode => AstNodeV2}
 
 import scala.util.{Failure, Success, Try}
 
 object Migrator {
 
+  val DEFAULT_HEADER = HeaderNode(Seq(VersionDirective(VersionMajor("2"), VersionMinor("0"))))
   val CLASS_PROPERTY_NAME = "class"
 
   def bindingContextVariable: List[String] = List("message", "exception", "payload", "flowVars", "sessionVars", "recordVars", "null");
@@ -67,6 +72,21 @@ object Migrator {
     }
   }
 
+  private def toDWScript(arguments: Seq[MelExpressionNode]) = {
+    if (isStringType(arguments.head)) {
+      val dwScript = arguments.head.asInstanceOf[StringNode].literal
+      val apply: Parser = Parser.apply(dwScript, Some(V1OperatorManager))
+      var headNode: AstNodeV2 = V2LangMigrant.migrateSeq(Seq(apply.parse)).head
+      // avoid duplicating DW header
+      if (headNode.children().head == DEFAULT_HEADER) {
+        headNode = (headNode.children().drop(1)).head
+      }
+      new MigrationResult(headNode)
+    } else {
+      handleNonMigratableMethodInvocation()
+    }
+  }
+
   private def toDataweaveMethodInvocation(canonicalName: CanonicalNameNode, arguments: Seq[MelExpressionNode]) = {
     val name = canonicalName.name
     val lastDot = name.lastIndexOf('.')
@@ -87,10 +107,9 @@ object Migrator {
           case "contains" => toContainsInvocation(mel.VariableReferenceNode(candidateToCanonicalName), arguments.head)
           case "causedBy" => toExceptionFunction(name, arguments.head, false)
           case "causedExactlyBy" => toExceptionFunction(name, arguments.head, true)
+          case "dw" => toDWScript(arguments)
           case _ => {
-            counter += 1
-            val reference = "$" + counter
-            new MigrationResult(toDataweaveStringNode(reference).dwAstNode, DefaultMigrationMetadata(Seq(NonMigratable("expressions.methodInvocation"))))
+            handleNonMigratableMethodInvocation()
           }
         }
       }
@@ -101,6 +120,12 @@ object Migrator {
         }
       }
     }
+  }
+
+  private def handleNonMigratableMethodInvocation(): MigrationResult = {
+    counter += 1
+    val reference = "$" + counter
+    new MigrationResult(toDataweaveStringNode(reference).dwAstNode, DefaultMigrationMetadata(Seq(NonMigratable("expressions.methodInvocation"))))
   }
 
   private def toUUID: MigrationResult = {
@@ -146,7 +171,7 @@ object Migrator {
     val rRes = toDataweaveAst(right)
     val variableReferenceNode = VariableReferenceNode(NameIdentifier("Java::isInstanceOf"))
     val metadata = lRes.metadata.children ++ rRes.metadata.children
-    val classNameNode = dw.structure.StringNode(rRes.getGeneratedCode(HeaderNode(Seq())).replaceFirst("---\nvars\\.", "")).annotate(QuotedStringAnnotation('''))
+    val classNameNode = dw.structure.StringNode(rRes.getGeneratedCode(HeaderNode(Seq())).replaceFirst("(---\n){0,1}vars\\.", "")).annotate(QuotedStringAnnotation('''))
     new MigrationResult(dw.functions.FunctionCallNode(variableReferenceNode, FunctionCallParametersNode(Seq(lRes.dwAstNode, classNameNode))), DefaultMigrationMetadata(JavaModuleRequired() +: metadata))
   }
 
@@ -154,7 +179,7 @@ object Migrator {
     val parameters = toDataweaveAst(parametersNode)
     val metadata = parameters.metadata.children
     val variableReferenceNode = VariableReferenceNode(NameIdentifier("Java::isCausedBy"))
-    val classNameNode = dw.structure.StringNode(parameters.getGeneratedCode(HeaderNode(Seq())).replaceFirst("---\nvars\\.", "")).annotate(QuotedStringAnnotation('''))
+    val classNameNode = dw.structure.StringNode(parameters.getGeneratedCode(HeaderNode(Seq())).replaceFirst("(---\n){0,1}vars\\.", "")).annotate(QuotedStringAnnotation('''))
     val errorCauseNode = dw.structure.StringNode("error.cause")
     val strictMatchNode = dw.structure.BooleanNode(strictMatch.toString)
     new MigrationResult(dw.functions.FunctionCallNode(variableReferenceNode, FunctionCallParametersNode(Seq(errorCauseNode, classNameNode, strictMatchNode))),DefaultMigrationMetadata(JavaModuleRequired() +: metadata))
@@ -225,7 +250,7 @@ object Migrator {
 
   private def toDataweaveEnclosedExpressionNode(expression: MelExpressionNode): MigrationResult = {
     val result = toDataweaveAst(expression)
-    new MigrationResult(result.dwAstNode.annotate(EnclosedMarkAnnotation()), DefaultMigrationMetadata(result.metadata.children))
+    new MigrationResult(result.dwAstNode.annotate(EnclosedMarkAnnotation(UnknownLocation)), DefaultMigrationMetadata(result.metadata.children))
   }
 
   private def toDataweaveConstructorNode(canonicalName: CanonicalNameNode, arguments: Seq[MelExpressionNode]): MigrationResult = {
@@ -272,7 +297,7 @@ object Migrator {
     val objectNode = dw.structure.ArrayNode(Seq())
     val classValue = dw.structure.StringNode(canonicalName.name)
     //class: "java.util.ArrayList"
-    val schemaProperty = SchemaPropertyNode(NameIdentifier(CLASS_PROPERTY_NAME), classValue)
+    val schemaProperty = SchemaPropertyNode(NameIdentifier(CLASS_PROPERTY_NAME), classValue, None)
     val arrayTypeRef = TypeReferenceNode(NameIdentifier("Array"), None, Some(SchemaNode(Seq(schemaProperty))))
     new MigrationResult(dw.operators.BinaryOpNode(AsOpId, objectNode, arrayTypeRef))
   }
@@ -281,7 +306,7 @@ object Migrator {
     val objectNode = dw.structure.ObjectNode(Seq())
     val classValue = dw.structure.StringNode(canonicalName.name)
     //class: "java.util.HashMap"
-    val schemaProperty = SchemaPropertyNode(NameIdentifier(CLASS_PROPERTY_NAME), classValue)
+    val schemaProperty = SchemaPropertyNode(NameIdentifier(CLASS_PROPERTY_NAME), classValue, None)
     val objectTypeRef = TypeReferenceNode(NameIdentifier("Object"), None, Some(SchemaNode(Seq(schemaProperty))))
     new MigrationResult(dw.operators.BinaryOpNode(AsOpId, objectNode, objectTypeRef))
   }
